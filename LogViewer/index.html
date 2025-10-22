@@ -401,7 +401,7 @@
                     direction: 'backward'
                 });
 
-                // Try Loki API first, fallback to API logs
+                // Read directly from Loki API
                 let logs = [];
                 try {
                     const response = await fetch(`/api/loki/loki/api/v1/query_range?${params}`);
@@ -412,22 +412,43 @@
                     
                     const data = await response.json();
                     logs = parseLokiResponse(data);
-                } catch (lokiError) {
-                    console.warn('Loki not available, using API logs:', lokiError);
-                    // Use API logs endpoint with filters
-                    const apiParams = new URLSearchParams({
-                        level: document.getElementById('levelFilter').value,
-                        search: document.getElementById('searchFilter').value.trim(),
-                        limit: document.getElementById('pageSize').value
-                    });
                     
-                    const apiResponse = await fetch(`/api/logs?${apiParams}`);
-                    if (apiResponse.ok) {
-                        const apiData = await apiResponse.json();
-                        logs = apiData.logs || [];
-                    } else {
-                        throw new Error('API logs not available');
+                    if (logs.length === 0) {
+                        // If no logs from Loki, generate some test logs and send them to Loki
+                        console.log('No logs found in Loki, generating test logs...');
+                        await generateAndSendTestLogs();
+                        
+                        // Wait a moment for logs to be processed
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        // Retry the query
+                        const retryResponse = await fetch(`/api/loki/loki/api/v1/query_range?${params}`);
+                        if (retryResponse.ok) {
+                            const retryData = await retryResponse.json();
+                            logs = parseLokiResponse(retryData);
+                        }
+                        
+                        // If still no logs, show a message
+                        if (logs.length === 0) {
+                            logs = [{
+                                timestamp: new Date().toISOString(),
+                                level: 'info',
+                                message: 'No logs found in Loki. Click "Generate Test Logs" to create some logs.',
+                                source: 'LogViewer',
+                                raw: 'No logs available'
+                            }];
+                        }
                     }
+                } catch (lokiError) {
+                    console.error('Error reading from Loki:', lokiError);
+                    // Show error message instead of throwing
+                    logs = [{
+                        timestamp: new Date().toISOString(),
+                        level: 'error',
+                        message: 'Failed to connect to Loki: ' + lokiError.message,
+                        source: 'LogViewer',
+                        raw: 'Loki connection error'
+                    }];
                 }
                 
                 displayLogs(logs);
@@ -602,6 +623,64 @@
                 }
             } catch (error) {
                 alert('Error generating test logs: ' + error.message);
+            }
+        }
+
+        // Generate and send test logs to Loki
+        async function generateAndSendTestLogs() {
+            try {
+                // First, generate logs via API
+                const response = await fetch('/api/test/WeatherForecast/test-logs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    console.log('Test logs generated via API');
+                }
+                
+                // Also send some test logs directly to Loki
+                const timestamp = Date.now() * 1000000; // Convert to nanoseconds
+                const testLogs = [
+                    {
+                        stream: { job: "lokitest-api", level: "info", source: "WeatherForecastController" },
+                        values: [[timestamp.toString(), "Weather forecast requested"]]
+                    },
+                    {
+                        stream: { job: "lokitest-api", level: "info", source: "WeatherForecastController" },
+                        values: [[(timestamp + 1000000).toString(), "Generated 5 weather forecasts"]]
+                    },
+                    {
+                        stream: { job: "lokitest-api", level: "error", source: "WeatherForecastController" },
+                        values: [[(timestamp + 2000000).toString(), "Error processing item 3: Simulated error"]]
+                    },
+                    {
+                        stream: { job: "lokitest-api", level: "warn", source: "DatabaseService" },
+                        values: [[(timestamp + 3000000).toString(), "Database connection timeout"]]
+                    },
+                    {
+                        stream: { job: "lokitest-api", level: "debug", source: "CacheService" },
+                        values: [[(timestamp + 4000000).toString(), "Cache miss for key: user:123"]]
+                    }
+                ];
+                
+                const lokiResponse = await fetch('/api/loki/loki/api/v1/push', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ streams: testLogs })
+                });
+                
+                if (lokiResponse.ok) {
+                    console.log('Test logs sent directly to Loki');
+                } else {
+                    console.warn('Failed to send test logs to Loki:', lokiResponse.statusText);
+                }
+            } catch (error) {
+                console.warn('Error sending test logs to Loki:', error);
             }
         }
 
