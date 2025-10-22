@@ -210,6 +210,32 @@
             margin-top: 5px;
         }
 
+        .log-labels {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 8px;
+        }
+
+        .log-label {
+            background: #f0f0f0;
+            color: #555;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .log-label.key {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .log-label.value {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
         .pagination {
             display: flex;
             justify-content: center;
@@ -445,7 +471,7 @@
                     logs = [{
                         timestamp: new Date().toISOString(),
                         level: 'error',
-                        message: 'Failed to connect to Loki: ' + lokiError.message,
+                        message: 'Failed to connect to Loki: ' + lokiError.message + '. Please check if Loki service is running.',
                         source: 'LogViewer',
                         raw: 'Loki connection error'
                     }];
@@ -517,15 +543,20 @@
             const logs = [];
             data.data.result.forEach(stream => {
                 if (stream.values) {
+                    // Extract stream labels (job, level, source, etc.)
+                    const streamLabels = stream.stream || {};
+                    
                     stream.values.forEach(([timestamp, message]) => {
                         try {
                             // Parse the log message (assuming JSON format from Serilog)
                             const logData = JSON.parse(message);
                             logs.push({
                                 timestamp: new Date(parseInt(timestamp) / 1000000).toISOString(),
-                                level: logData['@l'] || logData['Level'] || 'info',
+                                level: streamLabels.level || logData['@l'] || logData['Level'] || 'info',
                                 message: logData['@mt'] || logData['@m'] || logData['Message'] || message,
-                                source: logData['SourceContext'] || logData['Source'] || 'Unknown',
+                                source: streamLabels.source || logData['SourceContext'] || logData['Source'] || 'Unknown',
+                                job: streamLabels.job || 'unknown',
+                                labels: streamLabels,
                                 raw: message
                             });
                         } catch (e) {
@@ -535,9 +566,11 @@
                             
                             logs.push({
                                 timestamp: new Date(parseInt(timestamp) / 1000000).toISOString(),
-                                level: levelMatch ? levelMatch[1].toLowerCase() : 'info',
+                                level: streamLabels.level || (levelMatch ? levelMatch[1].toLowerCase() : 'info'),
                                 message: message.replace(/\[(TRACE|DEBUG|INFO|WARN|ERROR|CRITICAL|FATAL)\]/gi, '').trim(),
-                                source: sourceMatch ? sourceMatch[1] : 'Unknown',
+                                source: streamLabels.source || (sourceMatch ? sourceMatch[1] : 'Unknown'),
+                                job: streamLabels.job || 'unknown',
+                                labels: streamLabels,
                                 raw: message
                             });
                         }
@@ -558,16 +591,30 @@
                 return;
             }
             
-            logsList.innerHTML = logs.map(log => `
-                <div class="log-entry">
-                    <div class="log-header">
-                        <span class="log-level ${log.level}">${log.level}</span>
-                        <span class="log-timestamp">${formatTimestamp(log.timestamp)}</span>
+            logsList.innerHTML = logs.map(log => {
+                // Create labels display
+                const labelsHtml = Object.entries(log.labels || {})
+                    .filter(([key, value]) => key && value && key !== 'level') // Exclude level as it's shown separately
+                    .map(([key, value]) => `
+                        <span class="log-label key">${escapeHtml(key)}</span>
+                        <span class="log-label value">${escapeHtml(value)}</span>
+                    `).join('');
+                
+                // Clean source text to avoid duplicate "Source:" labels
+                const sourceText = log.source.replace(/^Source:\s*/i, '');
+                
+                return `
+                    <div class="log-entry">
+                        <div class="log-header">
+                            <span class="log-level ${log.level}">${log.level}</span>
+                            <span class="log-timestamp">${formatTimestamp(log.timestamp)}</span>
+                        </div>
+                        <div class="log-message">${escapeHtml(log.message)}</div>
+                        <div class="log-source">Source: ${escapeHtml(sourceText)}</div>
+                        ${labelsHtml ? `<div class="log-labels">${labelsHtml}</div>` : ''}
                     </div>
-                    <div class="log-message">${escapeHtml(log.message)}</div>
-                    <div class="log-source">Source: ${log.source}</div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
 
         // Update pagination controls
@@ -622,7 +669,8 @@
                     throw new Error('Failed to generate test logs');
                 }
             } catch (error) {
-                alert('Error generating test logs: ' + error.message);
+                console.error('Error generating test logs:', error);
+                alert('Error generating test logs: ' + error.message + '. Please check if the API service is running.');
             }
         }
 
@@ -645,23 +693,54 @@
                 const timestamp = Date.now() * 1000000; // Convert to nanoseconds
                 const testLogs = [
                     {
-                        stream: { job: "lokitest-api", level: "info", source: "WeatherForecastController" },
+                        stream: { 
+                            job: "lokitest-api", 
+                            level: "info", 
+                            source: "WeatherForecastController",
+                            component: "api",
+                            environment: "development"
+                        },
                         values: [[timestamp.toString(), "Weather forecast requested"]]
                     },
                     {
-                        stream: { job: "lokitest-api", level: "info", source: "WeatherForecastController" },
+                        stream: { 
+                            job: "lokitest-api", 
+                            level: "info", 
+                            source: "WeatherForecastController",
+                            component: "api",
+                            environment: "development"
+                        },
                         values: [[(timestamp + 1000000).toString(), "Generated 5 weather forecasts"]]
                     },
                     {
-                        stream: { job: "lokitest-api", level: "error", source: "WeatherForecastController" },
+                        stream: { 
+                            job: "lokitest-api", 
+                            level: "error", 
+                            source: "WeatherForecastController",
+                            component: "api",
+                            environment: "development",
+                            error_code: "E001"
+                        },
                         values: [[(timestamp + 2000000).toString(), "Error processing item 3: Simulated error"]]
                     },
                     {
-                        stream: { job: "lokitest-api", level: "warn", source: "DatabaseService" },
+                        stream: { 
+                            job: "lokitest-api", 
+                            level: "warn", 
+                            source: "DatabaseService",
+                            component: "database",
+                            environment: "development"
+                        },
                         values: [[(timestamp + 3000000).toString(), "Database connection timeout"]]
                     },
                     {
-                        stream: { job: "lokitest-api", level: "debug", source: "CacheService" },
+                        stream: { 
+                            job: "lokitest-api", 
+                            level: "debug", 
+                            source: "CacheService",
+                            component: "cache",
+                            environment: "development"
+                        },
                         values: [[(timestamp + 4000000).toString(), "Cache miss for key: user:123"]]
                     }
                 ];

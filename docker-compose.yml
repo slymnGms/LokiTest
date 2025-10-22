@@ -63,6 +63,8 @@ services:
       - "3001:3001"
     environment:
       - NODE_ENV=production
+      - LOKI_URL=http://loki:3100
+      - API_URL=http://lokitest-api:8080
     networks:
       - loki-network
     depends_on:

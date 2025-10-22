@@ -4,7 +4,15 @@ const path = require('path');
 const cors = require('cors');
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
+
+// Get service URLs from environment variables or use defaults
+const LOKI_URL = process.env.LOKI_URL || 'http://localhost:3100';
+const API_URL = process.env.API_URL || 'http://localhost:5000';
+
+console.log(`Starting LogViewer server on port ${PORT}`);
+console.log(`Loki URL: ${LOKI_URL}`);
+console.log(`API URL: ${API_URL}`);
 
 // Middleware
 app.use(cors());
@@ -13,7 +21,7 @@ app.use(express.static(path.join(__dirname)));
 
 // Proxy to Loki API
 app.use('/api/loki', createProxyMiddleware({
-    target: 'http://localhost:3100',
+    target: LOKI_URL,
     changeOrigin: true,
     pathRewrite: {
         '^/api/loki': ''
@@ -26,7 +34,7 @@ app.use('/api/loki', createProxyMiddleware({
 
 // Proxy to API for test log generation
 app.use('/api/test', createProxyMiddleware({
-    target: 'http://localhost:5000',
+    target: API_URL,
     changeOrigin: true,
     pathRewrite: {
         '^/api/test': ''
@@ -47,8 +55,19 @@ app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
-    console.log(`Log Viewer server running on http://localhost:${PORT}`);
-    console.log(`Proxying Loki API from http://localhost:3100`);
-    console.log(`Proxying Test API from http://localhost:5000`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Log Viewer server running on http://0.0.0.0:${PORT}`);
+    console.log(`Proxying Loki API from ${LOKI_URL}`);
+    console.log(`Proxying Test API from ${API_URL}`);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    process.exit(1);
 });
