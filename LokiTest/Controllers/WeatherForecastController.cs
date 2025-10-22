@@ -22,6 +22,13 @@ namespace LokiTest.Controllers
         [HttpGet(Name = "GetWeatherForecast")]
         public IEnumerable<WeatherForecast> Get()
         {
+            using var activity = _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["Operation"] = "GetWeatherForecast",
+                ["Controller"] = "WeatherForecastController",
+                ["RequestId"] = Guid.NewGuid().ToString("N")[..8]
+            });
+
             _logger.LogInformation("Weather forecast requested");
             
             var forecasts = Enumerable.Range(1, 5).Select(index => new WeatherForecast
@@ -32,38 +39,66 @@ namespace LokiTest.Controllers
             })
             .ToArray();
 
-            _logger.LogInformation("Generated {Count} weather forecasts", forecasts.Length);
+            _logger.LogInformation("Generated {Count} weather forecasts with temperature range {MinTemp}°C to {MaxTemp}°C", 
+                forecasts.Length, 
+                forecasts.Min(f => f.TemperatureC), 
+                forecasts.Max(f => f.TemperatureC));
+            
             return forecasts;
         }
 
         [HttpPost("test-logs")]
         public IActionResult GenerateTestLogs()
         {
+            using var activity = _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["Operation"] = "GenerateTestLogs",
+                ["Controller"] = "WeatherForecastController",
+                ["RequestId"] = Guid.NewGuid().ToString("N")[..8],
+                ["TestRunId"] = DateTime.UtcNow.Ticks
+            });
+
             _logger.LogInformation("Starting test log generation");
             
-            // Generate various log levels
-            _logger.LogTrace("This is a trace log message");
-            _logger.LogDebug("This is a debug log message with data: {Data}", new { UserId = 123, Action = "Test" });
-            _logger.LogInformation("This is an information log message");
-            _logger.LogWarning("This is a warning log message");
-            _logger.LogError("This is an error log message");
-            _logger.LogCritical("This is a critical log message");
+            // Generate various log levels with structured data
+            _logger.LogTrace("This is a trace log message with context {Context}", new { Component = "TestGenerator", Phase = "Initialization" });
+            _logger.LogDebug("This is a debug log message with data: {Data}", new { UserId = 123, Action = "Test", SessionId = "sess_456" });
+            _logger.LogInformation("This is an information log message with metrics {Metrics}", new { MemoryUsage = "45MB", CpuUsage = "12%" });
+            _logger.LogWarning("This is a warning log message with details {Details}", new { WarningCode = "W001", Component = "CacheService" });
+            _logger.LogError("This is an error log message with error details {ErrorDetails}", new { ErrorCode = "E001", StackTrace = "N/A" });
+            _logger.LogCritical("This is a critical log message with critical data {CriticalData}", new { SystemState = "Degraded", AlertLevel = "High" });
 
-            // Generate structured logs
+            // Generate structured logs with business context
             for (int i = 1; i <= 10; i++)
             {
-                _logger.LogInformation("Processing item {ItemNumber} of {TotalItems} with status {Status}", 
-                    i, 10, i % 3 == 0 ? "Error" : "Success");
+                var status = i % 3 == 0 ? "Error" : "Success";
+                var processingTime = Random.Shared.Next(50, 500);
+                
+                using var itemScope = _logger.BeginScope(new Dictionary<string, object>
+                {
+                    ["ItemNumber"] = i,
+                    ["TotalItems"] = 10,
+                    ["Status"] = status,
+                    ["ProcessingTimeMs"] = processingTime
+                });
+
+                _logger.LogInformation("Processing item {ItemNumber} of {TotalItems} with status {Status} in {ProcessingTimeMs}ms", 
+                    i, 10, status, processingTime);
                 
                 if (i % 3 == 0)
                 {
-                    _logger.LogError("Error processing item {ItemNumber}: {ErrorMessage}", 
-                        i, $"Simulated error for item {i}");
+                    _logger.LogError("Error processing item {ItemNumber}: {ErrorMessage} after {ProcessingTimeMs}ms", 
+                        i, $"Simulated error for item {i}", processingTime);
+                }
+                else if (i % 5 == 0)
+                {
+                    _logger.LogWarning("Slow processing detected for item {ItemNumber}: {ProcessingTimeMs}ms exceeds threshold", 
+                        i, processingTime);
                 }
             }
 
-            _logger.LogInformation("Test log generation completed");
-            return Ok(new { Message = "Test logs generated successfully", Count = 15 });
+            _logger.LogInformation("Test log generation completed successfully with {TotalLogs} log entries", 15);
+            return Ok(new { Message = "Test logs generated successfully", Count = 15, RequestId = activity?.ToString() ?? "unknown" });
         }
 
         [HttpGet("error-test")]

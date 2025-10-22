@@ -1,6 +1,7 @@
 using Serilog;
 using Serilog.Events;
 using Serilog.Sinks.Loki;
+using Serilog.Sinks.Loki.Labels;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,10 +14,12 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Application", "LokiTest")
+    .Enrich.WithProperty("Environment", builder.Environment.EnvironmentName)
     .WriteTo.Console()
     .WriteTo.File("logs/lokitest-api-.log", 
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 7)
+    .WriteTo.LokiHttp(new NoAuthCredentials(lokiUrl))
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -42,7 +45,7 @@ app.MapControllers();
 
 try
 {
-    Log.Information("Starting LokiTest API");
+    Log.Information("Starting LokiTest API - Logging directly to Loki at {LokiUrl}", lokiUrl);
     app.Run();
 }
 catch (Exception ex)
